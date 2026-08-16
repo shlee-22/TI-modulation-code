@@ -1,0 +1,128 @@
+%% Pulse Pal 4-channel staggered sine-burst stimulation
+% CH1: 2000 Hz sine, 1 Vpp, ON at t = 0.00 s
+% CH2: 2004 Hz sine, 1 Vpp, ON at t = 0.00 s
+% CH3: 2000 Hz sine, 1 Vpp, ON at t = 0.65 s
+% CH4: 2004 Hz sine, 1 Vpp, ON at t = 0.65 s
+% ON = 0.25 s, total cycle = 1.30 s
+% Runs continuously until stopped manually (Ctrl+C)
+
+%% 2) Channel / waveform settings
+ch1 = 1;
+ch2 = 2;
+ch3 = 3;
+ch4 = 4;
+
+trainID1 = 1;   % waveform slot for 2000 Hz
+trainID2 = 2;   % waveform slot for 2004 Hz
+
+f1 = 2000;      % Hz
+f2 = 2004;      % Hz
+
+Vpp = 2.0;      % peak-to-peak voltage [V]
+A   = Vpp/2;    % amplitude = 1 V
+
+Ton      = 0.25;   % ON duration [s]
+delay34  = 0.65;   % CH3/4 start delay within each cycle [s]
+Tcycle   = 1.30;   % total cycle duration [s]
+
+Ts = 1e-4;         % 100 us = 10 kHz sampling
+t  = 0:Ts:(Ton - Ts);
+
+%% 3) Build waveforms
+wave2000 = A * sin(2*pi*f1*t);   % for CH1, CH3
+wave2004 = A * sin(2*pi*f2*t);   % for CH2, CH4
+
+%% 4) Safe initialization
+for ch = [ch1 ch2 ch3 ch4]
+    SetPulsePalVoltage(ch, 0);
+end
+
+%% 5) Configure output channels
+% CH1 and CH3 -> 2000 Hz waveform
+ProgramPulsePalParam(ch1, 'Phase1Duration', Ts);
+ProgramPulsePalParam(ch1, 'CustomTrainID', trainID1);
+ProgramPulsePalParam(ch1, 'RestingVoltage', 0);
+ProgramPulsePalParam(ch1, 'CustomTrainLoop', 0);
+
+ProgramPulsePalParam(ch3, 'Phase1Duration', Ts);
+ProgramPulsePalParam(ch3, 'CustomTrainID', trainID1);
+ProgramPulsePalParam(ch3, 'RestingVoltage', 0);
+ProgramPulsePalParam(ch3, 'CustomTrainLoop', 0);
+
+% CH2 and CH4 -> 2004 Hz waveform
+ProgramPulsePalParam(ch2, 'Phase1Duration', Ts);
+ProgramPulsePalParam(ch2, 'CustomTrainID', trainID2);
+ProgramPulsePalParam(ch2, 'RestingVoltage', 0);
+ProgramPulsePalParam(ch2, 'CustomTrainLoop', 0);
+
+ProgramPulsePalParam(ch4, 'Phase1Duration', Ts);
+ProgramPulsePalParam(ch4, 'CustomTrainID', trainID2);
+ProgramPulsePalParam(ch4, 'RestingVoltage', 0);
+ProgramPulsePalParam(ch4, 'CustomTrainLoop', 0);
+
+%% 6) Upload custom waveforms
+ok1 = SendCustomWaveform(trainID1, Ts, wave2000);
+ok2 = SendCustomWaveform(trainID2, Ts, wave2004);
+
+if ok1 ~= 1
+    AbortPulsePal;
+    for ch = [ch1 ch2 ch3 ch4]
+        SetPulsePalVoltage(ch, 0);
+    end
+    EndPulsePal;
+    error('Failed to upload waveform 1 (2000 Hz).'); %2000Hz자극 업로드 실패 시
+end
+
+if ok2 ~= 1
+    AbortPulsePal;
+    for ch = [ch1 ch2 ch3 ch4]
+        SetPulsePalVoltage(ch, 0);
+    end
+    EndPulsePal;
+    error('Failed to upload waveform 2 (2004 Hz).'); %2004Hz자극 업로드 실패 시
+end
+
+%% 7) Continuous stimulation with tic/toc-based scheduling: 시간 기준으로 자극을 반복 실행하는 부분, 실행 중임을 보여주는 출력
+disp('Stimulation running... Press Ctrl+C in MATLAB to stop.');
+
+try
+    t0 = tic;       % absolute reference time
+    cycleIdx = 0;
+
+    while true
+        cycleStart = cycleIdx * Tcycle;
+
+        % Wait until exact cycle start time
+        while toc(t0) < cycleStart
+            pause(0.0005);
+        end
+
+        % Trigger CH1 and CH2 at t = 0 of each cycle
+        TriggerPulsePal([ch1 ch2]);
+
+        % Wait until exact CH3/4 trigger time
+        while toc(t0) < (cycleStart + delay34)
+            pause(0.0005);
+        end
+
+        % Trigger CH3 and CH4 at t = 0.65 s of each cycle
+        TriggerPulsePal([ch3 ch4]);
+
+        % Move to next cycle
+        cycleIdx = cycleIdx + 1;
+    end
+
+catch ME
+    % Cleanup on manual stop or error
+    AbortPulsePal;
+    for ch = [ch1 ch2 ch3 ch4]
+        SetPulsePalVoltage(ch, 0);
+    end
+    EndPulsePal;
+
+    % Re-throw unexpected errors, but not user stop
+    if ~contains(ME.message, 'Operation terminated by user') && ...
+       ~contains(ME.identifier, 'MATLAB:class:InvalidHandle')
+        rethrow(ME);
+    end
+end
